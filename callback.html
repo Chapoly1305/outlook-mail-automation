@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Microsoft OAuth 认证</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+            background-color: #f0f2f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .success {
+            color: #28a745;
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .info {
+            margin: 10px 0;
+            color: #666;
+        }
+        .token-info {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+            font-family: monospace;
+            word-break: break-all;
+        }
+        .copy-button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .copy-button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success">✓ 认证成功!</div>
+        <div class="info">授权码已成功获取，正在处理...</div>
+        <div class="token-info">
+            <p>Token将被安全保存到配置文件中</p>
+            <p>授权状态: <span class="status">正在获取Token...</span></p>
+            <p>过期时间: <span class="expires-at">处理中...</span></p>
+            <p>窗口将在<span id="countdown">5</span>秒后自动关闭</p>
+        </div>
+    </div>
+    <script>
+        let count = 5;
+        const countdownElement = document.getElementById('countdown');
+        
+        setInterval(() => {
+            count--;
+            countdownElement.textContent = count;
+            if (count <= 0) {
+                window.close();
+            }
+        }, 1000);
+    </script>
+</body>
+</html> 
