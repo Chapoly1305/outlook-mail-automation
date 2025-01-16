@@ -44,7 +44,6 @@ config = load_config()
 microsoft_config = config['microsoft']
 
 CLIENT_ID = microsoft_config['client_id']
-CLIENT_SECRET = microsoft_config['client_secret']
 GRAPH_API_ENDPOINT = 'https://graph.microsoft.com/v1.0'
 TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
@@ -68,7 +67,6 @@ class EmailClient:
         """刷新访问令牌"""
         refresh_params = {
             'client_id': CLIENT_ID,
-            'client_secret': CLIENT_SECRET,
             'refresh_token': self.refresh_token,
             'grant_type': 'refresh_token',
         }
