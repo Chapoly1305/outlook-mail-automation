@@ -2,37 +2,23 @@
 """
 Microsoft OAuth2认证脚本
 用于获取Microsoft的access_token和refresh_token
+支持使用系统浏览器或无浏览器模式
 """
 
-from DrissionPage import Chromium
 import requests
-from typing import Dict
+import webbrowser
 import logging
 import configparser
-from urllib.parse import quote, parse_qs
 import time
 from datetime import datetime
-import winreg
 import base64
 import hashlib
 import secrets
 import string
+import sys
+from urllib.parse import quote, parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
-
-def get_proxy():
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as key:
-            proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
-            proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
-            
-            if proxy_enable and proxy_server:
-                proxy_parts = proxy_server.split(":")
-                if len(proxy_parts) == 2:
-                    return {"http": f"http://{proxy_server}", "https": f"http://{proxy_server}"}
-    except WindowsError:
-        pass
-    return {"http": None, "https": None}
 
 def load_config():
     config = configparser.ConfigParser()
@@ -58,6 +44,10 @@ REDIRECT_URI = microsoft_config['redirect_uri']
 AUTH_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
 TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 
+# 全局变量用于存储验证码
+global_code_verifier = None
+auth_code_received = None
+
 # 权限范围
 SCOPES = [
     'offline_access',
@@ -76,10 +66,11 @@ def generate_code_challenge(code_verifier: str) -> str:
     sha256_hash = hashlib.sha256(code_verifier.encode()).digest()
     return base64.urlsafe_b64encode(sha256_hash).decode().rstrip('=')
 
-def request_authorization(tab) -> tuple:
-    """请求Microsoft OAuth2授权"""
-    code_verifier = generate_code_verifier()
-    code_challenge = generate_code_challenge(code_verifier)
+def get_auth_url():
+    """生成授权URL"""
+    global global_code_verifier
+    global_code_verifier = generate_code_verifier()
+    code_challenge = generate_code_challenge(global_code_verifier)
     
     scope = ' '.join(SCOPES)
     auth_params = {
@@ -94,27 +85,9 @@ def request_authorization(tab) -> tuple:
     }
     
     params = '&'.join([f'{k}={quote(v)}' for k, v in auth_params.items()])
-    auth_url = f'{AUTH_URL}?{params}'
-    
-    tab.get(auth_url)
-    logger.info("等待用户登录和授权...")
-    
-    tab.wait.url_change(text='localhost:8000', timeout=300)
-    
-    callback_url = tab.url
-    logger.info(f"回调URL: {callback_url}")
-    
-    query_components = parse_qs(callback_url.split('?')[1]) if '?' in callback_url else {}
-    
-    if 'code' not in query_components:
-        raise ValueError("未能获取授权码")
-    
-    auth_code = query_components['code'][0]
-    logger.info("成功获取授权码")
-    
-    return auth_code, code_verifier
+    return f'{AUTH_URL}?{params}'
 
-def get_tokens(auth_code: str, code_verifier: str) -> Dict[str, str]:
+def get_tokens(auth_code: str, code_verifier: str):
     """使用授权码获取访问令牌和刷新令牌"""
     token_params = {
         'client_id': CLIENT_ID,
@@ -130,7 +103,7 @@ def get_tokens(auth_code: str, code_verifier: str) -> Dict[str, str]:
     }
     
     try:
-        response = requests.post(TOKEN_URL, data=token_params, headers=headers, proxies=get_proxy())
+        response = requests.post(TOKEN_URL, data=token_params, headers=headers)
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
@@ -141,58 +114,94 @@ def get_tokens(auth_code: str, code_verifier: str) -> Dict[str, str]:
 
 class OAuthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        global auth_code_received
+        
         if '/?code=' in self.path:
             self.send_response(200)
             self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             
-            with open('templates/callback.html', 'r', encoding='utf-8') as f:
-                content = f.read()
-                self.wfile.write(content.encode('utf-8'))
+            query_components = parse_qs(self.path.split('?')[1]) if '?' in self.path else {}
+            if 'code' in query_components:
+                auth_code_received = query_components['code'][0]
+                
+                response_html = """
+                <html>
+                <head><title>Authorization Successful</title></head>
+                <body>
+                <h1>Authorization Successful</h1>
+                <p>You can close this window and return to the application.</p>
+                </body>
+                </html>
+                """
+                self.wfile.write(response_html.encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
 
 def start_server():
     server = HTTPServer(('localhost', 8000), OAuthHandler)
-    server.serve_forever()
-
-def main():
-    server_thread = threading.Thread(target=start_server)
+    server_thread = threading.Thread(target=server.serve_forever)
     server_thread.daemon = True
     server_thread.start()
+    return server
+
+def main():
+    global auth_code_received, global_code_verifier
+    
+    # 启动本地服务器接收回调
+    server = start_server()
+    
+    # 获取授权URL
+    auth_url = get_auth_url()
+    
+    # 根据命令行参数决定使用哪种方式打开URL
+    if len(sys.argv) > 1 and sys.argv[1] == '--no-browser':
+        # 无浏览器模式
+        print("\n请手动访问以下URL进行授权:")
+        print(f"\n{auth_url}\n")
+        print("授权后，您将被重定向到一个本地页面。\n")
+    else:
+        # 使用系统默认浏览器
+        print("正在使用系统浏览器打开授权页面...")
+        webbrowser.open(auth_url)
+    
+    # 等待授权码
+    print("等待用户授权...")
+    timeout = 300  # 5分钟超时
+    start_time = time.time()
+    
+    while auth_code_received is None:
+        if time.time() - start_time > timeout:
+            print("授权超时，请重试")
+            sys.exit(1)
+        time.sleep(0.5)
+    
+    print("成功获取授权码！")
     
     try:
-        browser = Chromium()
-        tab = browser.new_tab() 
-
-        logger.info("正在打开浏览器进行授权...")
+        # 获取令牌
+        tokens = get_tokens(auth_code_received, global_code_verifier)
         
-        try:
-            auth_code, code_verifier = request_authorization(tab)
-            logger.info("成功获取授权码！")
-            
-            tokens = get_tokens(auth_code, code_verifier)
-            
-            if 'refresh_token' in tokens:
-                logger.info("成功获取refresh_token！")
-                config['tokens']['refresh_token'] = tokens['refresh_token']
-                if 'access_token' in tokens:
-                    config['tokens']['access_token'] = tokens['access_token']
-                    expires_at = time.time() + tokens['expires_in']
-                    expires_at_str = datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M:%S')
-                    config['tokens']['expires_at'] = expires_at_str
-                save_config(config)
+        if 'refresh_token' in tokens:
+            print("成功获取refresh_token！")
+            if 'tokens' not in config:
+                config.add_section('tokens')
                 
-
-                time.sleep(15)
-                tab.close()
-        finally:
-            browser.quit()
-        
+            config['tokens']['refresh_token'] = tokens['refresh_token']
+            if 'access_token' in tokens:
+                config['tokens']['access_token'] = tokens['access_token']
+                expires_at = time.time() + tokens['expires_in']
+                expires_at_str = datetime.fromtimestamp(expires_at).strftime('%Y-%m-%d %H:%M:%S')
+                config['tokens']['expires_at'] = expires_at_str
+            save_config(config)
+            print("令牌已保存到配置文件")
     except Exception as e:
-        logger.error(f"程序执行出错: {e}")
-        raise
+        logger.error(f"获取令牌时出错: {e}")
+        sys.exit(1)
+    finally:
+        # 停止服务器
+        server.shutdown()
 
 if __name__ == '__main__':
     main()

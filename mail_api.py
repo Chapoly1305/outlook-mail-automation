@@ -9,22 +9,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 import configparser
-import winreg
 import time
-
-def get_proxy():
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") as key:
-            proxy_enable, _ = winreg.QueryValueEx(key, "ProxyEnable")
-            proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
-            
-            if proxy_enable and proxy_server:
-                proxy_parts = proxy_server.split(":")
-                if len(proxy_parts) == 2:
-                    return {"http": f"http://{proxy_server}", "https": f"http://{proxy_server}"}
-    except WindowsError:
-        pass
-    return {"http": None, "https": None}
 
 def load_config():
     """从config.txt加载配置"""
@@ -72,7 +57,7 @@ class EmailClient:
         }
         
         try:
-            response = requests.post(TOKEN_URL, data=refresh_params, proxies=get_proxy())
+            response = requests.post(TOKEN_URL, data=refresh_params)
             response.raise_for_status()
             tokens = response.json()
             
@@ -121,14 +106,13 @@ class EmailClient:
             response = requests.get(
                 f'{GRAPH_API_ENDPOINT}/me/mailFolders/{folder_id}/messages',
                 headers=headers,
-                params=query_params,
-                proxies=get_proxy()
+                params=query_params
             )
             response.raise_for_status()
             return response.json()['value']
         except requests.RequestException as e:
             logger.error(f"获取邮件失败: {e}")
-            if response.status_code == 401:
+            if hasattr(response, 'status_code') and response.status_code == 401:
                 self.refresh_access_token()
                 return self.get_messages(folder_id, top)
             raise
@@ -177,15 +161,14 @@ class EmailClient:
             response = requests.post(
                 f'{GRAPH_API_ENDPOINT}/me/sendMail',
                 headers=headers,
-                json=email_msg,
-                proxies=get_proxy()
+                json=email_msg
             )
             response.raise_for_status()
             logger.info(f"邮件已成功发送给 {', '.join(to_recipients)}")
             return True
         except requests.RequestException as e:
             logger.error(f"发送邮件失败: {e}")
-            if response.status_code == 401:
+            if hasattr(response, 'status_code') and response.status_code == 401:
                 self.refresh_access_token()
                 return self.send_email(to_recipients, subject, content, is_html)
             raise
@@ -194,7 +177,7 @@ def main():
     try:
         client = EmailClient()
         
-        recipients = ['recipient@example.com']  # 替换为实际的收件人邮箱
+        recipients = ['jchen73@gmu.edu']  # 替换为实际的收件人邮箱
         print("\n发送邮件:")
         subject = '测试邮件'                     #替换为实际发送邮件的主题
         content = '这是一封测试邮件。\n\n来自Python脚本的问候！'   #替换为实际发送邮件的内容
